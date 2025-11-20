@@ -36,7 +36,7 @@ jobs:
         pnpm i --frozen-lockfile
         echo "正在生成 Protobuf TS 类型文件..."
         mkdir -p src/types/proto  # 确保输出目录存在
-        pnpm exec buf generate --out src/types/proto  # 用 pnpm exec 执行本地 buf
+        pnpm exec buf generate -o src/types/proto  # 正确参数：-o 而非 --out
         pnpm build
         mkdir -p ../artifact
         rm -rf ../server/router/frontend/dist
