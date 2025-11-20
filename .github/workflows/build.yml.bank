@@ -1,6 +1,10 @@
 name: Build
 
-on: workflow_dispatch
+# 新增 push 触发：修改任意文件（含 YAML）都会触发构建；保留手动触发
+on: 
+  workflow_dispatch:  # 手动触发（原功能保留）
+  push:               # 新增：推送代码（含 YAML 修改）自动触发
+    branches: [ main ]  # 可选：限制仅 main 分支推送触发（可根据实际分支名修改）
 
 jobs:
   build:
@@ -20,18 +24,73 @@ jobs:
       with:
         node-version: 20
 
+    - name: Install system dependencies
+      run: |
+        sudo apt update && sudo apt install -y protobuf-compiler jq unzip wget
+
     - name: Clone Repo
       run: |
         git clone https://github.com/Vespa314/cflow.git
         npm install -g pnpm
 
-    - name: Build Frontend
+    - name: Build Frontend (补充所有 Google API 依赖)
       run: |
         cd cflow/web
-        # export COREPACK_SKIP_SIGNATURES=true
-        # corepack enable && export COREPACK_SKIP_SIGNATURES=true && pnpm i --frozen-lockfile
         pnpm i --frozen-lockfile
+        cd ..
+        
+        # 1. 下载完整的 Google Protobuf 公共依赖（含所有缺失的 API 定义）
+        echo "下载 Google Protobuf 公共依赖..."
+        mkdir -p ./proto/google/{api,protobuf}
+        # 标准 Protobuf 类型
+        wget -qO ./proto/google/protobuf/descriptor.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/descriptor.proto
+        wget -qO ./proto/google/protobuf/empty.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/empty.proto
+        wget -qO ./proto/google/protobuf/timestamp.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/timestamp.proto
+        wget -qO ./proto/google/protobuf/field_mask.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/field_mask.proto
+        # Google API 定义（补充缺失的 launch_stage.proto）
+        wget -qO ./proto/google/api/annotations.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/annotations.proto
+        wget -qO ./proto/google/api/http.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/http.proto
+        wget -qO ./proto/google/api/client.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/client.proto
+        wget -qO ./proto/google/api/field_behavior.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/field_behavior.proto
+        wget -qO ./proto/google/api/launch_stage.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/launch_stage.proto  # 新增：补充 client.proto 依赖的文件
+        
+        # 2. 查找并验证 proto 文件
+        PROTO_FILES=$(find ./proto -name "*.proto" -path "*/api/v2/*")
+        if [ -z "$PROTO_FILES" ]; then
+          echo "警告：未找到 api/v2 目录下的 .proto 文件，尝试备用路径..."
+          PROTO_FILES=$(find ./web/proto -name "*.proto" -path "*/api/v2/*")
+        fi
+        if [ -z "$PROTO_FILES" ]; then
+          echo "错误：未找到任何 .proto 文件，无法生成类型文件"
+          exit 1
+        fi
+        echo "找到的 proto 文件："
+        echo "$PROTO_FILES"
+        
+        # 3. 生成 TypeScript 类型文件（无注释，参数完整）
+        echo "生成 TypeScript 类型文件..."
+        protoc \
+          --proto_path=./proto \
+          --plugin=./web/node_modules/.bin/protoc-gen-ts_proto \
+          --ts_proto_out=./web/src/types/proto \
+          --ts_proto_opt=esModuleInterop=true,forceLong=string,useOptionals=messages,outputTypeRegistry=true \
+          $PROTO_FILES
+        
+        # 4. 验证类型文件生成结果
+        mkdir -p ./web/src/types/proto/api/v2
+        GENERATED_FILES=$(ls ./web/src/types/proto/api/v2/*.ts 2>/dev/null | wc -l)
+        if [ $GENERATED_FILES -eq 0 ]; then
+          echo "错误：未生成任何 TypeScript 类型文件"
+          exit 1
+        fi
+        echo "成功生成 $GENERATED_FILES 个类型文件，目录结构："
+        ls -la ./web/src/types/proto/api/v2/
+        
+        # 5. 前端编译
+        cd web
         pnpm build
+        
+        # 6. 复制前端产物
         mkdir -p ../artifact
         rm -rf ../server/router/frontend/dist
         mkdir -p ../server/router/frontend
@@ -41,10 +100,13 @@ jobs:
     - name: Build binary
       run: |
         cd cflow
+        # 编译多架构二进制
         GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow.exe && cd artifact && tar -czvf ../cflow-windows-amd64.tar.gz * && cd ..
         GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-freebsd-amd64.tar.gz * && cd ..
         GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-darwin-amd64.tar.gz * && cd ..
         GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-linux-amd64.tar.gz * && cd ..
+        # 新增 Linux-arm64 架构
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-linux-arm64.tar.gz * && cd ..
         cd ..
         
     - name: Upload artifact
@@ -56,10 +118,28 @@ jobs:
             cflow/cflow-freebsd-amd64.tar.gz
             cflow/cflow-darwin-amd64.tar.gz
             cflow/cflow-linux-amd64.tar.gz
+            cflow/cflow-linux-arm64.tar.gz
             
-    - name: Generate release tag
+    - name: Generate release tag (兼容无标签场景)
       id: tag
-      run: echo "release_tag=$(wget -qO- https://api.github.com/repos/Vespa314/cflow/tags | gawk -F '["v]' '/name/{print "v"$5;exit}')" >> $GITHUB_OUTPUT
+      run: |
+        LATEST_TAG=$(wget -qO- https://api.github.com/repos/Vespa314/cflow/tags | jq -r '.[0].name // "v1.0.0"' | sed 's/^v//')
+        echo "release_tag=v$LATEST_TAG" >> $GITHUB_OUTPUT
+        echo "最终发布标签：v$LATEST_TAG"
+
+    - name: Delete existing tag (if exists)
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG_NAME: ${{ steps.tag.outputs.release_tag }}
+      run: |
+        cd cflow
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
+        if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+          git tag -d "$TAG_NAME"
+          echo "删除本地标签 $TAG_NAME"
+        fi
+        git push origin --delete "$TAG_NAME" 2>/dev/null || echo "远程标签 $TAG_NAME 不存在"
 
     - name: Create release
       uses: softprops/action-gh-release@v1
@@ -72,6 +152,11 @@ jobs:
             cflow/cflow-freebsd-amd64.tar.gz
             cflow/cflow-darwin-amd64.tar.gz
             cflow/cflow-linux-amd64.tar.gz
+            cflow/cflow-linux-arm64.tar.gz
+        overwrite: true
+        draft: false
+        prerelease: false
+
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2
       with:
