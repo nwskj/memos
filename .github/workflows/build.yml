@@ -142,35 +142,31 @@ jobs:
         fi
         echo "使用插件路径：$PLUGIN_PATH"
         
-        # 关键修复：调整 ts-proto 参数，适配项目代码期望
-        # 1. addGrpcWeb: 生成 gRPC-Web 兼容代码
-        # 2. outputServices=grpc-web: 导出 ServiceDefinition（解决模块无导出问题）
-        # 3. useOptionals=none: 禁用可选字段（避免 $type 缺失错误，或启用 addTypePrefix 生成 $type）
-        # 4. addTypePrefix: 为消息添加 $type 属性（匹配 UpdateResourceRequest 类型要求）
+        # 关键修复：每个 ts-proto 参数单独用 --ts_proto_opt 声明（原逗号拼接格式错误）
+        # 优化：移除 addTypePrefix 引号，确保 $type 占位符正常生效
         protoc \
           --proto_path=./proto \
           --plugin=protoc-gen-ts_proto="$PLUGIN_PATH" \
           --ts_proto_out=./web/src/types/proto \
-          --ts_proto_opt= \
-            esModuleInterop=true, \
-            forceLong=string, \
-            useOptionals=none, \  # 禁用可选字段，或改为 useOptionals=messages
-            addTypePrefix="$type", \  # 生成 $type 属性（关键：解决 Property '$type' is missing 错误）
-            addGrpcWeb=true, \  # 启用 gRPC-Web 兼容模式
-            outputServices=grpc-web, \  # 导出 ServiceDefinition（解决模块无导出问题）
-            outputTypeRegistry=true, \
-            exactTypes=false, \
-            useDate=true \
+          --ts_proto_opt=esModuleInterop=true \
+          --ts_proto_opt=forceLong=string \
+          --ts_proto_opt=useOptionals=none \
+          --ts_proto_opt=addTypePrefix=$type \  # 移除引号，$type 是内置占位符
+          --ts_proto_opt=addGrpcWeb=true \
+          --ts_proto_opt=outputServices=grpc-web \
+          --ts_proto_opt=outputTypeRegistry=true \
+          --ts_proto_opt=exactTypes=false \
+          --ts_proto_opt=useDate=true \
           --experimental_allow_proto3_optional \
           $PROTO_FILES || {
             echo "protoc 编译失败，详细日志："
             cat ./web/src/types/proto/*.log 2>/dev/null
             # 输出生成的文件内容片段，便于排查
             echo "生成的文件列表："
-            ls -la ./web/src/types/proto/api/v2/
-            if [ -f ./web/src/types/proto/api/v2/resource_service.ts ]; then
-              echo "resource_service.ts 前 100 行："
-              head -n 100 ./web/src/types/proto/api/v2/resource_service.ts
+            ls -la ./web/src/types/proto/api/v2/ 2>/dev/null
+            if [ -d ./web/src/types/proto/api/v2/ ]; then
+              echo "resource_service.ts 前 100 行（若存在）："
+              head -n 100 ./web/src/types/proto/api/v2/resource_service.ts 2>/dev/null
             fi
             exit 1
           }
