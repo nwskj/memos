@@ -26,11 +26,9 @@ jobs:
     - name: Clone Repo
       run: |
         git clone https://github.com/Vespa314/cflow.git
-        export PNPM_HOME="/home/runner/.pnpm-global"
-        export PATH="$PNPM_HOME/bin:$PATH"
         npm install -g pnpm
         pnpm --version
-        pnpm add -g @bufbuild/buf@1.47.2
+        pnpm add -g @bufbuild/buf
         buf --version
 
     - name: Set up Go
