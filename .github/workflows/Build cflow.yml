@@ -34,24 +34,29 @@ jobs:
         # export COREPACK_SKIP_SIGNATURES=true
         # corepack enable && export COREPACK_SKIP_SIGNATURES=true && pnpm i --frozen-lockfile
         pnpm i --frozen-lockfile
+        
         echo "正在生成 Protobuf TS 类型文件..."
         mkdir -p src/types/proto  # 确保输出目录存在
 
-        # 自动搜索项目中的 proto 文件目录（从项目根目录开始查找）
-        PROTO_DIR=$(find ../../ -name "*.proto" | head -1 | xargs dirname)
-        if [ -z "$PROTO_DIR" ]; then
+        # 步骤1：找到 proto 子目录（api/v2）
+        PROTO_SUB_DIR=$(find ../../ -name "*.proto" | head -1 | xargs dirname)
+        if [ -z "$PROTO_SUB_DIR" ]; then
           echo "错误：未找到 .proto 协议文件！请确认项目中包含 proto 目录"
           exit 1
         fi
-        echo "找到 proto 目录：$PROTO_DIR"
+        echo "找到 proto 子目录：$PROTO_SUB_DIR"
 
-        # 配置仅用于编译，不会污染项目（构建后可删除，也可保留）
-        echo "version: v2" > "$PROTO_DIR/buf.yaml"
-        echo "已在 proto 目录创建临时 buf.yaml 配置"
+        # 步骤2：获取 proto 根目录（向上退两级：从 api/v2 → proto）
+        PROTO_ROOT_DIR=$(dirname $(dirname "$PROTO_SUB_DIR"))
+        echo "proto 根目录：$PROTO_ROOT_DIR"
+        
+        # 步骤3：在 proto 根目录创建 buf.yaml（必须放这里！）
+        echo "version: v2" > "$PROTO_ROOT_DIR/buf.yaml"
+        echo "已在 proto 根目录创建临时 buf.yaml 配置"
 
-        # 核心命令：指定 TS 插件、输出目录和编译规则
-        pnpm exec buf generate "$PROTO_DIR" \
-          -o src/types/proto \
+        # 步骤4：用 buf 编译（指定 proto 根目录，自动识别所有子目录的 proto 文件）
+        pnpm exec buf generate "$PROTO_ROOT_DIR" \
+         -o src/types/proto \
           --include-imports \
           --template '{"plugins": [{"name": "ts", "opt": ["target=ts", "import_extension=.js", "esModuleInterop=true"]}]}'
         
