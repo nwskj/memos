@@ -1,6 +1,10 @@
 name: Build
 
-on: workflow_dispatch
+# 新增 push 触发：修改任意文件（含 YAML）都会触发构建；保留手动触发
+on: 
+  workflow_dispatch:  # 手动触发（原功能保留）
+  push:               # 新增：推送代码（含 YAML 修改）自动触发
+    branches: [ main ]  # 可选：限制仅 main 分支推送触发（可根据实际分支名修改）
 
 jobs:
   build:
