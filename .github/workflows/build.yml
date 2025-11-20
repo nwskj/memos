@@ -47,11 +47,12 @@ jobs:
         wget -qO ./proto/google/protobuf/empty.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/empty.proto
         wget -qO ./proto/google/protobuf/timestamp.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/timestamp.proto
         wget -qO ./proto/google/protobuf/field_mask.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/field_mask.proto
-        # Google API 定义（补充 client.proto 和 field_behavior.proto）
+        # Google API 定义（补充缺失的 launch_stage.proto）
         wget -qO ./proto/google/api/annotations.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/annotations.proto
         wget -qO ./proto/google/api/http.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/http.proto
         wget -qO ./proto/google/api/client.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/client.proto
         wget -qO ./proto/google/api/field_behavior.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/field_behavior.proto
+        wget -qO ./proto/google/api/launch_stage.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/launch_stage.proto  # 新增：补充 client.proto 依赖的文件
         
         # 2. 查找并验证 proto 文件
         PROTO_FILES=$(find ./proto -name "*.proto" -path "*/api/v2/*")
