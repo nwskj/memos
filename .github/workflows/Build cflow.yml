@@ -25,8 +25,7 @@ jobs:
 
     - name: Clone Repo
       run: |
-        export LATEST_APP=$(wget -qO- https://api.github.com/repos/Vespa314/cflow/tags | gawk -F '["v]' '/name/{print "v"$5;exit}')
-        git clone -b $LATEST_APP https://github.com/Vespa314/cflow
+        git clone -b https://github.com/Vespa314/cflow
         npm install -g pnpm
 
     - name: Build Frontend
