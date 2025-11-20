@@ -25,7 +25,7 @@ jobs:
 
     - name: Clone Repo
       run: |
-        git clone -b https://github.com/Vespa314/cflow
+        git clone -b https://github.com/Vespa314/cflow.git
         npm install -g pnpm
 
     - name: Build Frontend
