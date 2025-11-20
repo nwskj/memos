@@ -29,13 +29,13 @@ jobs:
         git clone https://github.com/Vespa314/cflow.git
         npm install -g pnpm
 
-    - name: Build Frontend (彻底修复 Protobuf 生成逻辑)
+    - name: Build Frontend (补充所有 Google API 依赖)
       run: |
         cd cflow/web
         pnpm i --frozen-lockfile
         cd ..
         
-        # 1. 下载完整的 Google Protobuf 公共依赖
+        # 1. 下载完整的 Google Protobuf 公共依赖（含所有缺失的 API 定义）
         echo "下载 Google Protobuf 公共依赖..."
         mkdir -p ./proto/google/{api,protobuf}
         # 标准 Protobuf 类型
@@ -43,11 +43,13 @@ jobs:
         wget -qO ./proto/google/protobuf/empty.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/empty.proto
         wget -qO ./proto/google/protobuf/timestamp.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/timestamp.proto
         wget -qO ./proto/google/protobuf/field_mask.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/field_mask.proto
-        # Google API 定义
+        # Google API 定义（补充 client.proto 和 field_behavior.proto）
         wget -qO ./proto/google/api/annotations.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/annotations.proto
         wget -qO ./proto/google/api/http.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/http.proto
+        wget -qO ./proto/google/api/client.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/client.proto
+        wget -qO ./proto/google/api/field_behavior.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/field_behavior.proto
         
-        # 2. 查找并验证 proto 文件（关键修复：确保找到输入文件）
+        # 2. 查找并验证 proto 文件
         PROTO_FILES=$(find ./proto -name "*.proto" -path "*/api/v2/*")
         if [ -z "$PROTO_FILES" ]; then
           echo "警告：未找到 api/v2 目录下的 .proto 文件，尝试备用路径..."
@@ -60,7 +62,7 @@ jobs:
         echo "找到的 proto 文件："
         echo "$PROTO_FILES"
         
-        # 3. 修复 protoc 命令（删除行尾注释，确保参数连续）
+        # 3. 生成 TypeScript 类型文件（无注释，参数完整）
         echo "生成 TypeScript 类型文件..."
         protoc \
           --proto_path=./proto \
