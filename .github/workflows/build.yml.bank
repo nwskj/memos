@@ -24,6 +24,8 @@ jobs:
       run: |
         git clone https://github.com/Vespa314/cflow.git
         npm install -g pnpm
+        npm install -D ts-proto @grpc/grpc-js grpc-web protoc-gen-ts protoc-gen-grpc-web
+        apt-get install protobuf-compiler
 
     - name: Build Frontend
       run: |
