@@ -1,4 +1,4 @@
-name: Build
+name: Build memos
 
 on: 
   workflow_dispatch:  # 手动触发（原功能保留）
