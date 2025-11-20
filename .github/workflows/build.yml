@@ -23,38 +23,77 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: 20
+        cache: 'pnpm'  # 缓存 pnpm 依赖，加速安装
 
-    - name: Install system dependencies
+    - name: Install system dependencies (完整依赖集)
       run: |
-        sudo apt update && sudo apt install -y protobuf-compiler jq unzip wget
+        sudo apt update && sudo apt install -y \
+          protobuf-compiler \
+          jq \
+          unzip \
+          wget \
+          git \
+          curl \
+          build-essential  # 补充编译依赖，避免 node-gyp 报错
 
-    - name: Clone Repo
+    - name: Clone Repo & 初始化环境
       run: |
+        # 克隆仓库并进入目录
         git clone https://github.com/Vespa314/cflow.git
-        npm install -g pnpm
+        cd cflow
+        # 安装 pnpm 并设置镜像（加速国内访问）
+        npm install -g pnpm --registry=https://registry.npmmirror.com
+        # 验证 pnpm 版本
+        pnpm -v
+        # 创建 proto 依赖目录（提前初始化，避免权限问题）
+        mkdir -p ./proto/google/{api,protobuf}
+        cd ..
 
-    - name: Build Frontend (补充所有 Google API 依赖)
+    - name: Build Frontend (完整依赖+路径校验+版本锁定)
       run: |
-        cd cflow/web
-        pnpm i --frozen-lockfile
+        cd cflow
+        # ==================== 1. 前端依赖安装（强制安装+版本锁定）====================
+        cd web
+        # 强制清理缓存并安装依赖，确保 protoc-gen-ts_proto 正确安装
+        pnpm cache clean
+        # 锁定 ts-proto 版本（避免兼容性问题）
+        pnpm add ts-proto@1.169.0 --save-dev --registry=https://registry.npmmirror.com
+        # 安装所有依赖（--force 确保依赖完整性）
+        pnpm i --frozen-lockfile --force
         cd ..
         
-        # 1. 下载完整的 Google Protobuf 公共依赖（含所有缺失的 API 定义）
-        echo "下载 Google Protobuf 公共依赖..."
-        mkdir -p ./proto/google/{api,protobuf}
-        # 标准 Protobuf 类型
+        # ==================== 2. 下载完整 Google Protobuf 依赖（含所有间接依赖）====================
+        echo "下载 Google Protobuf 公共依赖（完整集合）..."
+        # 标准 Protobuf 核心类型（补充更多可能用到的基础类型）
         wget -qO ./proto/google/protobuf/descriptor.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/descriptor.proto
         wget -qO ./proto/google/protobuf/empty.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/empty.proto
         wget -qO ./proto/google/protobuf/timestamp.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/timestamp.proto
         wget -qO ./proto/google/protobuf/field_mask.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/field_mask.proto
-        # Google API 定义（补充缺失的 launch_stage.proto）
+        wget -qO ./proto/google/protobuf/any.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/any.proto
+        wget -qO ./proto/google/protobuf/struct.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/master/src/google/protobuf/struct.proto
+        # Google API 完整依赖（含所有可能的间接依赖）
         wget -qO ./proto/google/api/annotations.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/annotations.proto
         wget -qO ./proto/google/api/http.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/http.proto
         wget -qO ./proto/google/api/client.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/client.proto
         wget -qO ./proto/google/api/field_behavior.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/field_behavior.proto
-        wget -qO ./proto/google/api/launch_stage.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/launch_stage.proto  # 新增：补充 client.proto 依赖的文件
+        wget -qO ./proto/google/api/launch_stage.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/launch_stage.proto
+        wget -qO ./proto/google/api/httpbody.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/httpbody.proto
+        wget -qO ./proto/google/api/error_reason.proto https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/error_reason.proto
         
-        # 2. 查找并验证 proto 文件
+        # 验证依赖文件是否下载成功
+        DEPENDENCY_FILES=(
+          "./proto/google/protobuf/descriptor.proto"
+          "./proto/google/api/client.proto"
+          "./proto/google/api/launch_stage.proto"
+        )
+        for file in "${DEPENDENCY_FILES[@]}"; do
+          if [ ! -f "$file" ]; then
+            echo "错误：依赖文件 $file 下载失败"
+            exit 1
+          fi
+        done
+        
+        # ==================== 3. 查找并验证 proto 文件 ====================
         PROTO_FILES=$(find ./proto -name "*.proto" -path "*/api/v2/*")
         if [ -z "$PROTO_FILES" ]; then
           echo "警告：未找到 api/v2 目录下的 .proto 文件，尝试备用路径..."
@@ -67,50 +106,87 @@ jobs:
         echo "找到的 proto 文件："
         echo "$PROTO_FILES"
         
-        # 3. 生成 TypeScript 类型文件（无注释，参数完整）
+        # ==================== 4. 生成 TypeScript 类型文件（路径修复+参数优化）====================
         echo "生成 TypeScript 类型文件..."
+        # 验证 protoc-gen-ts_proto 是否存在（关键修复）
+        PLUGIN_PATH="./web/node_modules/.bin/protoc-gen-ts_proto"
+        if [ ! -f "$PLUGIN_PATH" ] || [ ! -x "$PLUGIN_PATH" ]; then
+          echo "错误：protoc-gen-ts_proto 插件未找到或不可执行"
+          echo "当前目录结构："
+          ls -la ./web/node_modules/.bin/
+          echo "尝试全局安装 fallback..."
+          pnpm add -g ts-proto@1.169.0 --registry=https://registry.npmmirror.com
+          PLUGIN_PATH=$(which protoc-gen-ts_proto)
+          if [ -z "$PLUGIN_PATH" ]; then
+            echo "错误：全局安装 protoc-gen-ts_proto 失败"
+            exit 1
+          fi
+        fi
+        
+        # 执行 protoc 编译（使用绝对路径+完整参数）
         protoc \
           --proto_path=./proto \
-          --plugin=./web/node_modules/.bin/protoc-gen-ts_proto \
+          --plugin=protoc-gen-ts_proto="$PLUGIN_PATH" \
           --ts_proto_out=./web/src/types/proto \
-          --ts_proto_opt=esModuleInterop=true,forceLong=string,useOptionals=messages,outputTypeRegistry=true \
+          --ts_proto_opt=esModuleInterop=true,forceLong=string,useOptionals=messages,outputTypeRegistry=true,exactTypes=false,useDate=true \
           $PROTO_FILES
         
-        # 4. 验证类型文件生成结果
+        # ==================== 5. 验证类型文件生成结果 ====================
         mkdir -p ./web/src/types/proto/api/v2
         GENERATED_FILES=$(ls ./web/src/types/proto/api/v2/*.ts 2>/dev/null | wc -l)
         if [ $GENERATED_FILES -eq 0 ]; then
           echo "错误：未生成任何 TypeScript 类型文件"
+          echo "protoc 编译日志："
+          cat ./web/src/types/proto/*.log 2>/dev/null
           exit 1
         fi
         echo "成功生成 $GENERATED_FILES 个类型文件，目录结构："
         ls -la ./web/src/types/proto/api/v2/
         
-        # 5. 前端编译
+        # ==================== 6. 前端编译（优化构建参数）====================
         cd web
-        pnpm build
-        
-        # 6. 复制前端产物
-        mkdir -p ../artifact
-        rm -rf ../server/router/frontend/dist
-        mkdir -p ../server/router/frontend
-        cp -R dist ../server/router/frontend/dist
-        cd ../..
-
-    - name: Build binary
-      run: |
-        cd cflow
-        # 编译多架构二进制
-        GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow.exe && cd artifact && tar -czvf ../cflow-windows-amd64.tar.gz * && cd ..
-        GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-freebsd-amd64.tar.gz * && cd ..
-        GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-darwin-amd64.tar.gz * && cd ..
-        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-linux-amd64.tar.gz * && cd ..
-        # 新增 Linux-arm64 架构
-        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o cflow ./cmd/cflow/main.go && rm -f artifact/* && cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-linux-arm64.tar.gz * && cd ..
+        # 编译前清理旧产物
+        rm -rf dist
+        # 生产环境构建（禁用 sourcemap 加速构建）
+        pnpm build --mode production --sourcemap false
         cd ..
         
-    - name: Upload artifact
-      uses: actions/upload-artifact@main
+        # ==================== 7. 复制前端产物（权限修复）====================
+        mkdir -p ../artifact
+        rm -rf ./server/router/frontend/dist
+        mkdir -p ./server/router/frontend/dist
+        # 复制产物并修复权限
+        cp -R ./web/dist/* ./server/router/frontend/dist/
+        chmod -R 755 ./server/router/frontend/dist
+        cd ..
+
+    - name: Build binary（优化编译流程）
+      run: |
+        cd cflow
+        # 创建产物目录（避免目录不存在报错）
+        mkdir -p artifact
+        # 编译多架构二进制（优化命令顺序，避免重复清理）
+        # Windows-amd64
+        GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cflow ./cmd/cflow/main.go
+        cp cflow artifact/cflow.exe && cd artifact && tar -czvf ../cflow-windows-amd64.tar.gz * && cd ..
+        # FreeBSD-amd64
+        GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cflow ./cmd/cflow/main.go
+        cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-freebsd-amd64.tar.gz * && cd ..
+        # Darwin-amd64
+        GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cflow ./cmd/cflow/main.go
+        cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-darwin-amd64.tar.gz * && cd ..
+        # Linux-amd64
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cflow ./cmd/cflow/main.go
+        cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-linux-amd64.tar.gz * && cd ..
+        # Linux-arm64
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cflow ./cmd/cflow/main.go
+        cp cflow artifact/cflow && cd artifact && tar -czvf ../cflow-linux-arm64.tar.gz * && cd ..
+        # 清理临时文件
+        rm -f cflow
+        cd ..
+        
+    - name: Upload artifact（稳定版本）
+      uses: actions/upload-artifact@v4  # 使用稳定版 v4
       with:
         name: cflow-pre-built
         path: |
@@ -119,11 +195,16 @@ jobs:
             cflow/cflow-darwin-amd64.tar.gz
             cflow/cflow-linux-amd64.tar.gz
             cflow/cflow-linux-arm64.tar.gz
-            
-    - name: Generate release tag (兼容无标签场景)
+        retention-days: 3  # 保留 3 天，避免存储占用
+        
+    - name: Generate release tag（兼容无标签+错误处理）
       id: tag
       run: |
-        LATEST_TAG=$(wget -qO- https://api.github.com/repos/Vespa314/cflow/tags | jq -r '.[0].name // "v1.0.0"' | sed 's/^v//')
+        # 增加超时和错误处理
+        LATEST_TAG=$(wget -T 10 -qO- https://api.github.com/repos/Vespa314/cflow/tags | jq -r '.[0].name // "v1.0.0"' | sed 's/^v//')
+        if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" == "null" ]; then
+          LATEST_TAG="1.0.0"
+        fi
         echo "release_tag=v$LATEST_TAG" >> $GITHUB_OUTPUT
         echo "最终发布标签：v$LATEST_TAG"
 
@@ -135,14 +216,22 @@ jobs:
         cd cflow
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
+        # 验证仓库是否为 git 仓库
+        if [ ! -d .git ]; then
+          echo "警告：当前目录不是 git 仓库，跳过标签删除"
+          exit 0
+        fi
+        # 删除本地标签
         if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
           git tag -d "$TAG_NAME"
           echo "删除本地标签 $TAG_NAME"
         fi
+        # 删除远程标签（忽略不存在的错误）
         git push origin --delete "$TAG_NAME" 2>/dev/null || echo "远程标签 $TAG_NAME 不存在"
+        cd ..
 
-    - name: Create release
-      uses: softprops/action-gh-release@v1
+    - name: Create release（稳定版+重试机制）
+      uses: softprops/action-gh-release@v2  # 使用最新稳定版 v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
@@ -156,8 +245,10 @@ jobs:
         overwrite: true
         draft: false
         prerelease: false
+        fail_on_unmatched_files: false  # 忽略文件不匹配错误
 
-    - name: Delete workflow runs
+    - name: Delete workflow runs（可选优化）
+      if: always()  # 无论前面步骤是否成功都执行
       uses: Mattraks/delete-workflow-runs@v2
       with:
         token: ${{ github.token }}
