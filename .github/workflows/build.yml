@@ -36,17 +36,19 @@ jobs:
           curl \
           build-essential  # 补充编译依赖，避免 node-gyp 报错
 
-    - name: 安装 pnpm 并配置环境（指定稳定版本+创建存储目录）
+    - name: 安装 pnpm 并配置环境（指定稳定版本+固定存储目录）
       run: |
         # 安装指定稳定版本（8.15.6），避免版本差异导致的命令问题
         npm install -g pnpm@8.15.6 --registry=https://registry.npmmirror.com
         # 验证 pnpm 版本和路径
         pnpm -v
         echo "PNPM 路径：$(which pnpm)"
-        # 创建 pnpm 存储目录（避免首次执行 store prune 报错）
-        PNPM_STORE=$(pnpm config get store-dir)
-        echo "PNPM 存储目录：$PNPM_STORE"
+        # 固定 pnpm 存储目录（避免自动获取为空）
+        PNPM_STORE="$HOME/.pnpm-store"
+        echo "使用固定 PNPM 存储目录：$PNPM_STORE"
         mkdir -p "$PNPM_STORE"
+        # 手动设置 pnpm 存储目录（确保后续命令使用该目录）
+        pnpm config set store-dir "$PNPM_STORE"
         # 将 pnpm 全局 bin 目录加入 PATH，确保所有步骤可访问
         PNPM_BIN=$(pnpm config get global-bin)
         echo "$PNPM_BIN" >> $GITHUB_PATH
@@ -68,7 +70,7 @@ jobs:
         # ==================== 1. 前端依赖安装（兼容命令+强制安装）====================
         cd web
         # 清理缓存（忽略目录不存在错误，兼容首次安装）
-        pnpm store prune || echo "PNPM 存储目录为空，跳过清理"
+        pnpm store prune || echo "PNPM 存储目录为空或清理失败，跳过清理"
         # 强制安装 ts-proto 并锁定版本（确保插件存在）
         pnpm add ts-proto@1.169.0 --save-dev --registry=https://registry.npmmirror.com --force
         # 安装所有依赖（无锁文件时用 --no-frozen-lockfile，有则保留 --frozen-lockfile）
