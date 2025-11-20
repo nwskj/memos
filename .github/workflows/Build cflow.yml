@@ -1,0 +1,111 @@
+name: Build cflow
+
+on: 
+  workflow_dispatch:  # 手动触发（保留）
+  push:               # main 分支推送自动触发（保留）
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 'stable'
+          check-latest: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Clone Repo（拉取 main 分支最新代码）
+        run: |
+          # 直接拉取 main 分支，无需标签
+          git clone -b main https://github.com/Vespa314/cflow
+          npm install -g pnpm
+
+      - name: Build Frontend
+        run: |
+          cd cflow/web
+          pnpm i --frozen-lockfile
+          pnpm build
+          mkdir -p ../artifact
+          rm -rf ../server/router/frontend/dist
+          mkdir -p ../server/router/frontend
+          cp -R dist ../server/router/frontend/dist
+          cd ../..
+
+      - name: Build binary（修复路径错误）
+        run: |
+          cd cflow  # 修复：克隆的仓库是 cflow，不是 memos
+          mkdir -p artifact  # 确保 artifact 目录存在
+          
+          # Windows amd64
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o artifact/cflow.exe ./cmd/cflow/main.go
+          cd artifact && tar -czvf ../cflow-windows-amd64.tar.gz cflow.exe && cd ..
+          
+          # FreeBSD amd64
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build -o artifact/cflow ./cmd/cflow/main.go
+          cd artifact && tar -czvf ../cflow-freebsd-amd64.tar.gz cflow && cd ..
+          
+          # Darwin amd64
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o artifact/cflow ./cmd/cflow/main.go
+          cd artifact && tar -czvf ../cflow-darwin-amd64.tar.gz cflow && cd ..
+          
+          # Linux amd64
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o artifact/cflow ./cmd/cflow/main.go
+          cd artifact && tar -czvf ../cflow-linux-amd64.tar.gz cflow && cd ..
+          
+          # Linux arm64
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o artifact/cflow ./cmd/cflow/main.go
+          cd artifact && tar -czvf ../cflow-linux-arm64.tar.gz cflow && cd ..
+          
+          cd ..  # 回到根目录
+
+      - name: Upload artifact（保留产物上传）
+        uses: actions/upload-artifact@main
+        with:
+          name: cflow-pre-built
+          path: |
+            cflow/cflow-windows-amd64.tar.gz
+            cflow/cflow-freebsd-amd64.tar.gz
+            cflow/cflow-darwin-amd64.tar.gz
+            cflow/cflow-linux-amd64.tar.gz
+            cflow/cflow-linux-arm64.tar.gz
+
+      - name: Generate release name（用时间戳命名，避免重复）
+        id: release
+        run: |
+          # 生成格式：cflow-main-YYYYMMDD-HHMMSS（如 cflow-main-20251120-153000）
+          RELEASE_NAME="cflow-main-$(date +'%Y%m%d-%H%M%S')"
+          echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create release（无标签，直接用时间戳命名）
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release.outputs.release_name }}  # 用时间戳作为标签（唯一不重复）
+          name: ${{ steps.release.outputs.release_name }}      # Release 名称和标签一致
+          files: |
+            cflow/cflow-windows-amd64.tar.gz
+            cflow/cflow-freebsd-amd64.tar.gz
+            cflow/cflow-darwin-amd64.tar.gz
+            cflow/cflow-linux-amd64.tar.gz
+            cflow/cflow-linux-arm64.tar.gz
+          overwrite: true  # 防止极端情况下时间戳重复（实际概率极低）
+          draft: false
+          prerelease: false
+
+      - name: Delete workflow runs（保留原清理逻辑）
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 1
+          keep_minimum_runs: 8
