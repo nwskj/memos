@@ -34,36 +34,39 @@ jobs:
         # export COREPACK_SKIP_SIGNATURES=true
         # corepack enable && export COREPACK_SKIP_SIGNATURES=true && pnpm i --frozen-lockfile
         pnpm i --frozen-lockfile
+        pnpm add -g @bufbuild/buf@1.47.2
         
         echo "正在生成 Protobuf TS 类型文件..."
         mkdir -p src/types/proto  # 确保输出目录存在
 
         # 步骤1：找到 proto 子目录（api/v2）
-        PROTO_SUB_DIR=$(find ../../ -name "*.proto" | head -1 | xargs dirname)
-        if [ -z "$PROTO_SUB_DIR" ]; then
-          echo "错误：未找到 .proto 协议文件！请确认项目中包含 proto 目录"
+        PROTO_ROOT_DIR="../proto"
+        if [ ! -d "$PROTO_ROOT_DIR" ]; then
+          echo "错误：未找到 proto 根目录！路径：$PROTO_ROOT_DIR"
           exit 1
         fi
-        echo "找到 proto 子目录：$PROTO_SUB_DIR"
-
-        # 步骤2：获取 proto 根目录（向上退两级：从 api/v2 → proto）
-        PROTO_ROOT_DIR=$(dirname $(dirname "$PROTO_SUB_DIR"))
         echo "proto 根目录：$PROTO_ROOT_DIR"
-        
-        # 步骤3：在 proto 根目录创建 buf.yaml（必须放这里！）
-        echo "version: v2" > "$PROTO_ROOT_DIR/buf.yaml"
-        echo "已在 proto 根目录创建临时 buf.yaml 配置"
 
-        # 步骤4：用 buf 编译（指定 proto 根目录，自动识别所有子目录的 proto 文件）
-        pnpm exec buf generate "$PROTO_ROOT_DIR" \
-         -o src/types/proto \
-          --include-imports \
+        # 步骤2：强制创建 buf.yaml（明确配置 roots）
+        cat > "$PROTO_ROOT_DIR/buf.yaml" << EOF
+        version: v2
+        build:
+          roots: ["./api/v2"]  # 明确 proto 文件目录
+        EOF
+        echo "已创建 buf.yaml 配置："
+        cat "$PROTO_ROOT_DIR/buf.yaml"  # 验证配置
+        
+        # 步骤3：在 proto 根目录执行 buf generate（修改执行目录和输出路径）
+        cd "$PROTO_ROOT_DIR"
+        pnpm exec buf generate \
+          -o ../web/src/types/proto \
           --template '{"plugins": [{"name": "ts", "opt": ["target=ts", "import_extension=.js", "esModuleInterop=true"]}]}'
-        
-        # （可选）删除临时创建的 buf.yaml（如需保留可注释此行）
-        rm -f "$PROTO_DIR/buf.yaml"
-        echo "已删除临时 buf.yaml 配置"
 
+        # 步骤4：返回 web 目录继续构建
+        cd ../web
+        rm -f "$PROTO_ROOT_DIR/buf.yaml"  # 删除临时配置
+        echo "已删除临时 buf.yaml 配置"
+        
         pnpm build
         mkdir -p ../artifact
         rm -rf ../server/router/frontend/dist
