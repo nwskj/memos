@@ -127,9 +127,9 @@ jobs:
         echo "找到的 proto 文件："
         echo "$PROTO_FILES"
         
-        # ==================== 4. 生成 TypeScript 类型文件（路径容错+参数兼容）====================
-        echo "生成 TypeScript 类型文件..."
-        # 确保输出目录存在（关键修复：避免 protoc 编译时目录不存在）
+        # ==================== 4. 生成 TypeScript 类型文件（适配 gRPC-Web 格式）====================
+        echo "生成 TypeScript 类型文件（适配 gRPC-Web）..."
+        # 确保输出目录存在
         mkdir -p ./web/src/types/proto
         # 优先项目内插件，其次全局插件
         PLUGIN_PATH="./web/node_modules/.bin/protoc-gen-ts_proto"
@@ -142,16 +142,36 @@ jobs:
         fi
         echo "使用插件路径：$PLUGIN_PATH"
         
-        # 执行 protoc 编译（兼容 proto3 语法，输出详细日志）
+        # 关键修复：调整 ts-proto 参数，适配项目代码期望
+        # 1. addGrpcWeb: 生成 gRPC-Web 兼容代码
+        # 2. outputServices=grpc-web: 导出 ServiceDefinition（解决模块无导出问题）
+        # 3. useOptionals=none: 禁用可选字段（避免 $type 缺失错误，或启用 addTypePrefix 生成 $type）
+        # 4. addTypePrefix: 为消息添加 $type 属性（匹配 UpdateResourceRequest 类型要求）
         protoc \
           --proto_path=./proto \
           --plugin=protoc-gen-ts_proto="$PLUGIN_PATH" \
           --ts_proto_out=./web/src/types/proto \
-          --ts_proto_opt=esModuleInterop=true,forceLong=string,useOptionals=messages,outputTypeRegistry=true,exactTypes=false,useDate=true \
+          --ts_proto_opt= \
+            esModuleInterop=true, \
+            forceLong=string, \
+            useOptionals=none, \  # 禁用可选字段，或改为 useOptionals=messages
+            addTypePrefix="$type", \  # 生成 $type 属性（关键：解决 Property '$type' is missing 错误）
+            addGrpcWeb=true, \  # 启用 gRPC-Web 兼容模式
+            outputServices=grpc-web, \  # 导出 ServiceDefinition（解决模块无导出问题）
+            outputTypeRegistry=true, \
+            exactTypes=false, \
+            useDate=true \
           --experimental_allow_proto3_optional \
           $PROTO_FILES || {
             echo "protoc 编译失败，详细日志："
             cat ./web/src/types/proto/*.log 2>/dev/null
+            # 输出生成的文件内容片段，便于排查
+            echo "生成的文件列表："
+            ls -la ./web/src/types/proto/api/v2/
+            if [ -f ./web/src/types/proto/api/v2/resource_service.ts ]; then
+              echo "resource_service.ts 前 100 行："
+              head -n 100 ./web/src/types/proto/api/v2/resource_service.ts
+            fi
             exit 1
           }
         
@@ -160,25 +180,33 @@ jobs:
         GENERATED_FILES=$(ls ./web/src/types/proto/api/v2/*.ts 2>/dev/null | wc -l)
         if [ $GENERATED_FILES -eq 0 ]; then
           echo "错误：未生成任何 TypeScript 类型文件"
-          # 输出目录结构，便于排查
           echo "输出目录结构："
           ls -la ./web/src/types/proto/
           exit 1
         fi
         echo "成功生成 $GENERATED_FILES 个类型文件"
+        # 验证 ServiceDefinition 是否导出
+        echo "验证 ServiceDefinition 导出："
+        grep -r "export const.*ServiceDefinition" ./web/src/types/proto/api/v2/ || echo "警告：未找到 ServiceDefinition 导出（可能需要调整参数）"
+        # 验证 $type 属性是否存在
+        grep -r "\$type" ./web/src/types/proto/api/v2/resource_service.ts 2>/dev/null || echo "警告：未找到 \$type 属性（可能需要调整参数）"
         
         # ==================== 6. 前端编译（移除静默模式，便于排查）====================
         cd web
         rm -rf dist
         echo "开始前端编译..."
+        # 编译前先执行 tsc 检查，输出详细错误
+        pnpm tsc --noEmit || {
+          echo "TypeScript 类型检查失败，详细错误："
+          exit 1
+        }
+        # 执行构建
         pnpm build --mode production --sourcemap false || {
           echo "前端编译失败，输出构建日志："
           cat node_modules/.pnpm-debug.log 2>/dev/null
-          # 输出依赖和环境信息
           echo "Node 版本：$(node -v)"
           echo "PNPM 版本：$(pnpm -v)"
-          echo "依赖列表："
-          pnpm list
+          echo "TypeScript 版本：$(pnpm exec tsc -v)"
           exit 1
         }
         cd ..
