@@ -20,16 +20,45 @@ jobs:
       with:
         node-version: 20
 
+    - name: Install system dependencies
+      run: |
+        # 安装 Protobuf 编译器（生成 TS 类型必需）
+        sudo apt update && sudo apt install -y protobuf-compiler jq
+
     - name: Clone Repo
       run: |
         git clone https://github.com/Vespa314/cflow.git
         npm install -g pnpm
 
-    - name: Build Frontend
+    - name: Build Frontend (含 Protobuf 类型生成)
       run: |
         cd cflow/web
+        # 安装前端依赖（含 protoc-gen-ts_proto 生成插件）
         pnpm i --frozen-lockfile
+        # 回到项目根目录，生成 Protobuf TypeScript 类型文件
+        cd ..
+        # 1. 确认 proto 文件路径（适配项目实际结构）
+        PROTO_DIR="./proto/api/v2"
+        if [ ! -d "$PROTO_DIR" ]; then
+          PROTO_DIR="./web/proto/api/v2"  # 备用路径（若 proto 在 web 目录下）
+        fi
+        echo "使用 proto 文件路径：$PROTO_DIR"
+        
+        # 2. 生成 TS 类型文件（输出到 web/src/types/proto，对应代码中的 @/types/proto）
+        protoc \
+          --plugin=./web/node_modules/.bin/protoc-gen-ts_proto \
+          --ts_proto_out=./web/src/types/proto \
+          --ts_proto_opt=esModuleInterop=true,forceLong=string,useOptionals=messages \
+          $PROTO_DIR/*.proto
+        
+        # 3. 验证类型文件是否生成成功
+        ls -la ./web/src/types/proto/api/v2/ || echo "警告：类型文件未生成，可能 proto 路径错误"
+        
+        # 4. 重新进入 web 目录执行前端编译
+        cd web
         pnpm build
+        
+        # 5. 复制前端产物到 server 目录（保持原有逻辑）
         mkdir -p ../artifact
         rm -rf ../server/router/frontend/dist
         mkdir -p ../server/router/frontend
@@ -58,7 +87,6 @@ jobs:
     - name: Generate release tag
       id: tag
       run: |
-        # 优化标签获取逻辑：获取最新的标签（去掉重复的 v 前缀）
         LATEST_TAG=$(wget -qO- https://api.github.com/repos/Vespa314/cflow/tags | jq -r '.[0].name' | sed 's/^v//')
         echo "release_tag=v$LATEST_TAG" >> $GITHUB_OUTPUT
         echo "原始标签：$LATEST_TAG，最终标签：v$LATEST_TAG"
@@ -68,7 +96,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         TAG_NAME: ${{ steps.tag.outputs.release_tag }}
       run: |
-        # 检查标签是否存在，存在则删除（本地+远程）
         cd cflow
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
@@ -76,7 +103,6 @@ jobs:
           echo "删除本地标签 $TAG_NAME"
           git tag -d "$TAG_NAME"
         fi
-        # 删除远程标签（忽略不存在的错误）
         echo "删除远程标签 $TAG_NAME"
         git push origin --delete "$TAG_NAME" 2>/dev/null || echo "远程标签 $TAG_NAME 不存在，无需删除"
 
@@ -91,7 +117,7 @@ jobs:
             cflow/cflow-freebsd-amd64.tar.gz
             cflow/cflow-darwin-amd64.tar.gz
             cflow/cflow-linux-amd64.tar.gz
-        overwrite: true  # 覆盖已存在的同名 release
+        overwrite: true
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2
