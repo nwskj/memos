@@ -1,0 +1,11 @@
+INSERT INTO user (id,username,role,nickname,password_hash) VALUES(1,'memos','HOST','Memos','$2a$10$Z7rBng/YKLc9S4rTF7CW7ey.6g9Ywkg2BFd4GfUkeMenbIJ9YI2qy');
+INSERT INTO memo (id,uid,creator_id,content,visibility,payload) VALUES(1,'hjnAKZx9q27tDasapLAm3P',1,'Hello world. This is my first memo! #hello','PUBLIC','{"tags":["hello"]}');
+INSERT INTO memo (id,uid,creator_id,content,visibility,payload) VALUES(2,'a2KkqjW4hyQMUeSRRehRQ5',1,'Ok, I''m able to upload **some images**. #features','PUBLIC','{"tags":["features"]}');
+INSERT INTO memo (id,uid,creator_id,content,visibility,payload) VALUES(3,'8x7bm252MAJfGBqW5dHHPE',1,replace('And here are my **tasks**. #todo\n- [x] deploy memos for myself;\n- [ ] share to my friends;\n- [ ] sounds good to me!','\n',char(10)),'PUBLIC','{"tags":["todo"],"property":{"hasTaskList":true,"hasIncompleteTasks":true}}');
+INSERT INTO memo (id,uid,creator_id,content,visibility,payload) VALUES(4,'kBfJKAyFvE52kQ9dmSZMfE',1,'Wow, it can be **referenced** too! REALLY GREAT!!! #features','PUBLIC','{"tags":["features"]}');
+INSERT INTO memo (id,uid,creator_id,content,visibility,pinned,payload) VALUES(5,'RF9XnAcWpcBzKttK83zQtf',1,replace('#sponsor **[Warp](https://go.warp.dev/memos)**: A modern terminal reimagined to work with AI, helping developers build faster and more efficiently.\n[![Warp](https://raw.githubusercontent.com/warpdotdev/brand-assets/main/Github/Sponsor/Warp-Github-LG-02.png)](https://go.warp.dev/memos)','\n',char(10)),'PUBLIC',1,'{"tags":["sponsor"],"property":{"hasLink":true}}');
+INSERT INTO memo_relation VALUES(4,1,'REFERENCE');
+INSERT INTO reaction (id,creator_id,content_id,reaction_type) VALUES(1,1,'memos/4','👍');
+INSERT INTO reaction (id,creator_id,content_id,reaction_type) VALUES(2,1,'memos/4','🔥');
+INSERT INTO reaction (id,creator_id,content_id,reaction_type) VALUES(3,1,'memos/4','+1');
+INSERT INTO system_setting VALUES ('MEMO_RELATED', '{"contentLengthLimit":8192,"enableAutoCompact":true,"enableComment":true,"enableLocation":true,"defaultVisibility":"PUBLIC","reactions":["👍","💛","🔥","👏","😂","👌","🚀","👀","🤔","🤡","❓","+1"]}', '');
